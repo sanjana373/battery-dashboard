@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Battery Health &amp; RUL Dashboard</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="mesh"></div>
+<canvas id="bg-canvas"></canvas>
+
+<div class="app-shell">
+
+  <!-- ============ LEFT SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <i class="bi bi-lightning-charge-fill"></i>
+      <span>BatteryAI</span>
+    </div>
+    <div class="brand-sub">CNN + BiLSTM Health Engine</div>
+
+    <nav class="nav-list">
+      <button class="nav-item active" data-page="health"><i class="bi bi-heart-pulse"></i> Battery Health Prediction</button>
+      <button class="nav-item" data-page="accuracy"><i class="bi bi-bullseye"></i> Accuracy</button>
+      <button class="nav-item" data-page="f1"><i class="bi bi-graph-up-arrow"></i> F1 Score</button>
+      <button class="nav-item" data-page="confusion"><i class="bi bi-grid-3x3"></i> Confusion Matrix</button>
+      <button class="nav-item" data-page="prf"><i class="bi bi-bar-chart-line"></i> Precision &amp; Recall</button>
+      <button class="nav-item" data-page="epochs"><i class="bi bi-activity"></i> Epochs / Loss</button>
+      <button class="nav-item" data-page="compare"><i class="bi bi-diagram-3"></i> Algorithm Comparison</button>
+      <button class="nav-item" data-page="roc"><i class="bi bi-graph-up"></i> ROC-AUC Curve</button>
+      <button class="nav-item" data-page="heatmap"><i class="bi bi-grid-fill"></i> Correlation Heatmap</button>
+      <button class="nav-item" data-page="report"><i class="bi bi-file-earmark-arrow-down"></i> Download Report</button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <i class="bi bi-cpu"></i> 1D-CNN &middot; BiLSTM &middot; Attention
+    </div>
+  </aside>
+
+  <!-- ============ RIGHT CONTENT ============ -->
+  <main class="content">
+
+    <header class="topbar">
+      <div>
+        <h1 id="page-title">Battery Health Prediction</h1>
+        <p id="page-sub" class="muted">Live SOC / SOH / RUL estimation from impedance-spectroscopy parameters</p>
+      </div>
+      <div class="topbar-stats" id="summary-stats"></div>
+    </header>
+
+    <!-- ---------------- PAGE 1: HEALTH PREDICTION ---------------- -->
+    <section class="page" id="page-health">
+      <div class="hero">
+        <div>
+          <h2><i class="bi bi-stars"></i> Real-time Battery Intelligence</h2>
+          <p>Powered by a hybrid 1D-CNN + BiLSTM deep learning engine, trained on impedance-spectroscopy telemetry to estimate SOH, SOC and RUL instantly.</p>
+        </div>
+        <div class="hero-orb"><i class="bi bi-battery-charging"></i></div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3><i class="bi bi-sliders"></i> Input Parameters</h3>
+          <p class="muted small">Enter the impedance-spectroscopy readings (magnitudes of the complex measurements).</p>
+          <form id="predict-form">
+            <div class="field">
+              <label>Sense Current — magnitude (0–1000)</label>
+              <input type="number" step="any" min="0" max="1000" name="sense_current_mag" value="930.5" required>
+            </div>
+            <div class="field">
+              <label>Battery Current — magnitude (0–1000)</label>
+              <input type="number" step="any" min="0" max="1000" name="battery_current_mag" value="225.5" required>
+            </div>
+            <div class="field">
+              <label>Current Ratio — magnitude (1.0-10.0)</label>
+              <input type="number" step="any" min="0" max="1000" name="current_ratio_mag" value="4.0" required>
+            </div>
+            <div class="field">
+              <label>Battery Impedance — magnitude (0–1000)</label>
+              <input type="number" step="any" min="0" max="1000" name="battery_impedance_mag" value="0.15" required>
+            </div>
+            <div class="field">
+              <label>Rectified Impedance — magnitude (0.0-0.25)</label>
+              <input type="number" step="any" min="0" max="1000" name="rectified_impedance_mag" value="0.10" required>
+            </div>
+            <button type="submit" class="btn-primary"><i class="bi bi-magic"></i> Predict Battery Health</button>
+          </form>
+        </div>
+
+        <div class="card result-card">
+          <h3><i class="bi bi-clipboard2-pulse"></i> Prediction Result</h3>
+          <div id="result-empty" class="muted" style="padding:40px 0;">
+            <i class="bi bi-battery-half" style="font-size:2.4rem; opacity:.4;"></i>
+            <p class="mt-2">Fill the form and click Predict to see results.</p>
+          </div>
+          <div id="result-body" class="d-none">
+
+            <div class="gauge-wrap">
+              <svg viewBox="0 0 220 220">
+                <circle class="gauge-track" cx="110" cy="110" r="92"></circle>
+                <circle class="gauge-fill" id="gauge-fill" cx="110" cy="110" r="92"
+                        stroke-dasharray="578" stroke-dashoffset="578"></circle>
+              </svg>
+              <div class="gauge-center">
+                <span class="gauge-value" id="gauge-soh-value">0%</span>
+                <span class="gauge-caption">State of Health</span>
+              </div>
+            </div>
+
+            <div class="risk-badge" id="risk-badge">—</div>
+
+            <div class="metric-row">
+              <div class="metric"><span class="metric-label">SOH</span><span class="metric-value" id="val-soh">—</span></div>
+              <div class="metric"><span class="metric-label">SOC</span><span class="metric-value" id="val-soc">—</span></div>
+              <div class="metric"><span class="metric-label">RUL (cycles)</span><span class="metric-value" id="val-rul">—</span></div>
+            </div>
+
+            <div class="risk-scale">
+              <div class="risk-scale-bar">
+                <span style="background:#ef4444" title="0-20 Critical"></span>
+                <span style="background:#f97316" title="20-40 High Risk"></span>
+                <span style="background:#eab308" title="40-60 Low Risk"></span>
+                <span style="background:#22c55e" title="60-80 Good"></span>
+                <span style="background:#06b6d4" title="80-100 Excellent"></span>
+              </div>
+              <div class="risk-scale-marker" id="risk-marker"></div>
+              <div class="risk-scale-labels">
+                <span>0</span><span>20</span><span>40</span><span>60</span><span>80</span><span>100</span>
+              </div>
+            </div>
+
+            <h4 class="mt-3" style="align-self:flex-start;"><i class="bi bi-shield-check"></i> Recommended Precautions</h4>
+            <ul id="precaution-list"></ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mt-3">
+        <h3><i class="bi bi-pie-chart"></i> Dataset Risk Distribution</h3>
+        <canvas id="riskDistChart" height="90"></canvas>
+      </div>
+    </section>
+
+    <!-- ---------------- PAGE 2: ACCURACY ---------------- -->
+    <section class="page d-none" id="page-accuracy">
+      <div class="hero">
+        <div><h2><i class="bi bi-bullseye"></i> Accuracy Across Models</h2><p>How often each algorithm gets the risk category exactly right.</p></div>
+        <div class="hero-orb"><i class="bi bi-bullseye"></i></div>
+      </div>
+      <div class="card"><h3>Model Accuracy by Algorithm</h3><canvas id="accChart" height="110"></canvas></div>
+    </section>
+
+    <!-- ---------------- PAGE 3: F1 ---------------- -->
+    <section class="page d-none" id="page-f1">
+      <div class="hero">
+        <div><h2><i class="bi bi-graph-up-arrow"></i> F1 Score</h2><p>Balances precision and recall into a single comparable number.</p></div>
+        <div class="hero-orb"><i class="bi bi-graph-up-arrow"></i></div>
+      </div>
+      <div class="card"><h3>F1 Score by Algorithm</h3><canvas id="f1Chart" height="110"></canvas></div>
+    </section>
+
+    <!-- ---------------- PAGE 4: CONFUSION MATRIX ---------------- -->
+    <section class="page d-none" id="page-confusion">
+      <div class="hero">
+        <div><h2><i class="bi bi-grid-3x3"></i> Confusion Matrix</h2><p>See exactly where each model confuses one risk class for another.</p></div>
+        <div class="hero-orb"><i class="bi bi-grid-3x3"></i></div>
+      </div>
+      <div class="card">
+        <h3>Confusion Matrix</h3>
+        <select id="cm-select" class="select-box"></select>
+        <img id="cm-img" class="result-img mt-3" src="" alt="Select an algorithm">
+      </div>
+    </section>
+
+    <!-- ---------------- PAGE 5: PRECISION/RECALL ---------------- -->
+    <section class="page d-none" id="page-prf">
+      <div class="hero">
+        <div><h2><i class="bi bi-bar-chart-line"></i> Precision & Recall</h2><p>Precision: how trustworthy a positive call is. Recall: how many true cases were caught.</p></div>
+        <div class="hero-orb"><i class="bi bi-bar-chart-line"></i></div>
+      </div>
+      <div class="card"><h3>Precision &amp; Recall by Algorithm</h3><canvas id="prfChart" height="110"></canvas></div>
+    </section>
+
+    <!-- ---------------- PAGE 6: EPOCHS/LOSS ---------------- -->
+    <section class="page d-none" id="page-epochs">
+      <div class="hero">
+        <div><h2><i class="bi bi-activity"></i> Training Dynamics</h2><p>Loss curves reveal how well the CNN+BiLSTM converged during training.</p></div>
+        <div class="hero-orb"><i class="bi bi-activity"></i></div>
+      </div>
+      <div class="card">
+        <h3>Training Loss per Epoch</h3>
+        <select id="epoch-select" class="select-box">
+          <option value="hybrid">CNN + BiLSTM (hybrid)</option>
+          <option value="cnn_only">1D-CNN only</option>
+          <option value="bilstm_only">BiLSTM only</option>
+          <option value="RandomForest">Random Forest</option>
+          <option value="GradientBoosting">Gradient Boosting</option>
+          <option value="SVM">SVM</option>
+          <option value="LogisticRegression">Logistic Regression</option>
+        </select>
+        <img id="epoch-img" class="result-img mt-3" src="" alt="Run train_deep.py to generate">
+        <p class="muted small mt-2">Generated by <code>train_deep.py</code> (needs TensorFlow). Run it once to populate this page.</p>
+      </div>
+    </section>
+
+    <!-- ---------------- PAGE 7: ALGO COMPARISON ---------------- -->
+    <section class="page d-none" id="page-compare">
+      <div class="hero">
+        <div><h2><i class="bi bi-diagram-3"></i> Algorithm Comparison</h2><p>Every model, every metric, side by side.</p></div>
+        <div class="hero-orb"><i class="bi bi-diagram-3"></i></div>
+      </div>
+      <div class="card">
+        <h3>Algorithm Comparison — Accuracy / Precision / Recall / F1</h3>
+        <img class="result-img" src="/static/img/algorithm_comparison_full.png"
+             onerror="this.onerror=null;this.src='/static/img/algorithm_comparison_classical.png';"
+             alt="Algorithm comparison">
+      </div>
+    </section>
+
+    <!-- ---------------- PAGE 8: ROC-AUC ---------------- -->
+    <section class="page d-none" id="page-roc">
+      <div class="hero">
+        <div><h2><i class="bi bi-graph-up"></i> ROC-AUC Curve</h2><p>True positive rate vs false positive rate per risk class.</p></div>
+        <div class="hero-orb"><i class="bi bi-graph-up"></i></div>
+      </div>
+      <div class="card">
+        <h3>ROC-AUC Curve</h3>
+        <select id="roc-select" class="select-box"></select>
+        <img id="roc-img" class="result-img mt-3" src="" alt="Select an algorithm">
+      </div>
+    </section>
+
+    <!-- ---------------- PAGE 9: HEATMAP ---------------- -->
+    <section class="page d-none" id="page-heatmap">
+      <div class="hero">
+        <div><h2><i class="bi bi-grid-fill"></i> Correlation Heatmap</h2><p>How each raw feature relates to SOH, SOC and RUL.</p></div>
+        <div class="hero-orb"><i class="bi bi-grid-fill"></i></div>
+      </div>
+      <div class="card">
+        <h3>Feature Correlation Heatmap</h3>
+        <img class="result-img" src="/static/img/correlation_heatmap.png" alt="Correlation heatmap">
+      </div>
+    </section>
+
+    <!-- ---------------- PAGE 10: REPORT ---------------- -->
+    <section class="page d-none" id="page-report">
+      <div class="hero">
+        <div><h2><i class="bi bi-file-earmark-pdf"></i> Export Everything</h2><p>One PDF with objectives, metrics, and every chart generated.</p></div>
+        <div class="hero-orb"><i class="bi bi-file-earmark-pdf"></i></div>
+      </div>
+      <div class="card text-center">
+        <h3><i class="bi bi-file-earmark-pdf"></i> Downloadable Report</h3>
+        <p class="muted">Generates a full PDF covering objectives, dataset summary, all metrics, confusion matrices, ROC-AUC and the correlation heatmap.</p>
+        <a href="/download_report" class="btn-primary"><i class="bi bi-download"></i> Download PDF Report</a>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
